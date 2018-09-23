@@ -52,4 +52,4 @@ gethosts --model "ProLiant DL380 Gen9" -f site 'osname like "%linux%"'
 
 ## License
 
-This repository is released under the [GPLv3 License](https://www.gnu.org/licenses/gpl-3.0.en.html)
+This repository is released under the [GPLv2 License](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html).
