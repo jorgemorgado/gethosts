@@ -1,0 +1,98 @@
+# gethosts(1) completion
+
+have gethosts &&
+{
+
+_gethosts_options()
+{
+    COMPREPLY=( $( compgen -W '-d --debug -h --help -v --version \
+        -l --host --hostname --osname --osver --site --domain --model --type \
+        --vendor --state --entity --user --group --techuser --techgroup \
+        --software --mac --ip --netmask --subnet --gateway --case-sensitive \
+        -f -s --separator --no-sort --show-dups --csv' -- "$cur" ) )
+}
+
+_gethosts_fields()
+{
+    COMPREPLY=( "${COMPREPLY[@]}" $( compgen -W 'domain entity gateway group \
+        ifname ip mac model netmask osname osver serial site software state \
+        subnet swver uuid user techgroup techuser type vendor' -- "$cur" ) )
+}
+
+_gethosts_lists()
+{
+    COMPREPLY=( "${COMPREPLY[@]}" $( compgen -W 'domain entity gateway group \
+        ip mac model netmask osname osver site software state subnet type \
+        user vendor' -- "$cur" ) )
+}
+
+_gethosts_comparison_operators()
+{
+    COMPREPLY=( $( compgen -W 'not like' -- "$cur" ) )
+}
+
+_gethosts_logical_operators()
+{
+    COMPREPLY=( $( compgen -W 'and or' -- "$cur" ) )
+}
+
+# gethosts(1) completion
+#
+_gethosts()
+{
+    local cur prev
+
+    COMPREPLY=()
+    _get_comp_words_by_ref cur prev
+ 
+    if [[ "$cur" == -* ]]; then
+        _gethosts_options
+        return 0
+    fi
+
+    case $prev in
+        -f)
+            _gethosts_fields
+            ;;
+        -l)
+            _gethosts_lists
+            ;;
+        --host|--hostname)
+            local IFS=$'\n'
+            COMPREPLY=( $( compgen -W '$( gethosts )' -- "$cur" ) )
+            ;;
+        --techuser)
+            local IFS=$'\n'
+            COMPREPLY=( $( compgen -W '$( gethosts -l user )' -- "$cur" ) )
+            ;;
+        --techgroup)
+            local IFS=$'\n'
+            COMPREPLY=( $( compgen -W '$( gethosts -l group )' -- "$cur" ) )
+            ;;
+        --domain|--entity|--gateway|--group|--ip|--mac|--model|--netmask|--osname|--osver|--site|--software|--state|--subnet|--type|--user|--vendor)
+            local IFS=$'\n'
+            COMPREPLY=( $( compgen -W '$( gethosts -l ${prev:2} )' -- "$cur" ) )
+            ;;
+        not|domain|entity|group|host|hostname|model|osname|osver|site|software|state|type|vendor)
+            _gethosts_comparison_operators
+            ;;
+        gethosts|and|or|\))
+            _gethosts_fields
+            ;;
+        *)
+            _gethosts_logical_operators
+            ;;
+    esac
+
+    return 0
+}
+complete -F _gethosts gethosts
+}
+
+# Local variables:
+# mode: shell-script
+# sh-basic-offset: 4
+# sh-indent-comment: t
+# indent-tabs-mode: nil
+# End:
+# ex: ts=4 sw=4 et filetype=sh
