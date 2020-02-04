@@ -40,6 +40,10 @@ import argparse
 import shlex
 import MySQLdb as mdb
 from MySQLdb import cursors
+import warnings
+
+# treat MySQL warnings as errors
+warnings.filterwarnings('error', category=mdb.Warning)
 
 # Return codes
 OK       = 0
