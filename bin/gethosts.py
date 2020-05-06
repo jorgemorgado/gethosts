@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
 # Usage:
@@ -29,11 +29,13 @@
 # v1.0, 20121228 Initial release
 # v1.2, 20130120 Fix 'ip' and 'mac' lists
 # v1.3, 20130121 Force itemtype to Computer on shared tables
+# v1.4, 20200204 Improve error handling for MySQL warnings (4gness)
+# v2.0, 20200421 Update select query for GLPI 9.4.5
 #
 
 """A program to print hosts lists from the GLPI inventory database."""
 
-__version__ = 1.3
+__version__ = 2.0
 
 import sys
 import argparse
@@ -46,11 +48,11 @@ import warnings
 warnings.filterwarnings('error', category=mdb.Warning)
 
 # Return codes
-OK       = 0
-WARNING  = 1
-ERROR    = 2
+OK = 0
+WARNING = 1
+ERROR = 2
 
-version = """%(prog)s 1.3, Copyright(c), 2012"""
+version = """%(prog)s 2.0, Copyright(c), 2012"""
 description = "Print lists of hosts from the GLPI inventory database."
 
 # GLPI separates computers and other object types (e.g. NetworkEquipment,
@@ -67,18 +69,18 @@ parser = argparse.ArgumentParser(description=description)
 parser.add_argument('-v', '--version', action='version', version=version)
 
 parser.add_argument('-d', '--debug', action='store_true', dest='debug',
-                  default=False,
-                  help='enable debug mode (developers only)',)
+                    default=False,
+                    help='enable debug mode (developers only)',)
 
 group = parser.add_argument_group('filter options')
 
 group.add_argument('-l', action='store', dest='list',
                    choices=['osname', 'osver', 'site', 'domain',
                             'model', 'type', 'vendor',
-                            'state', 'entity',
+                            'status', 'entity',
                             'user', 'group',
                             'software',
-                            'ip', 'mac', 'netmask', 'subnet', 'gateway' ],
+                            'ip', 'mac', 'netmask', 'subnet', 'gateway'],
                    help='show list by name')
 group.add_argument('--host', type=str, dest='hostname',
                    help='device hostname',)
@@ -96,8 +98,8 @@ group.add_argument('--type', type=str, dest='type',
                    help='host hardware type',)
 group.add_argument('--vendor', type=str, dest='vendor',
                    help='host vendor (manufacturer)',)
-group.add_argument('--state', type=str, dest='state',
-                   help='host state',)
+group.add_argument('--status', type=str, dest='status',
+                   help='host status',)
 group.add_argument('--entity', type=str, dest='entity',
                    help='host platform (entity)',)
 group.add_argument('--user', type=str, dest='user',
@@ -131,11 +133,11 @@ group.add_argument('-f', type=str, action='append', dest='field',
                    choices=['serial', 'uuid',
                             'osname', 'osver', 'site', 'domain',
                             'model', 'type', 'vendor',
-                            'state', 'entity',
+                            'status', 'entity',
                             'user', 'group', 'techuser', 'techgroup',
                             'software', 'swver',
                             'ifname', 'mac',
-                            'ip', 'netmask', 'subnet', 'gateway' ],
+                            'ip', 'netmask', 'subnet', 'gateway'],
                    help='field to display (multiple options are allowed). ')
 group.add_argument('-s', '--separator', dest='sep', default='\t',
                    help='output field separator (default is TAB)',)
@@ -160,10 +162,10 @@ if not args.debug:
 # mysql> GRANT SELECT ON $DBNAME.* TO $DBUSER@'*' IDENTIFIED BY '$DBPASS';
 # mysql> FLUSH PRIVILEGES;
 DBSERVER = 'DBSERVER'
-DBPORT   = 3306
-DBUSER   = 'DBUSER'
-DBPASS   = 'DBPASS'
-DBNAME   = 'DBNAME'
+DBPORT = 3306
+DBUSER = 'DBUSER'
+DBPASS = 'DBPASS'
+DBNAME = 'DBNAME'
 
 # Controls if the query will contain the software and/or network tables
 has_software = False
@@ -188,7 +190,8 @@ def mysql_run(query, sep, csv):
         cursor.execute(query)
 
         # Overrite field separator if output in CSV
-        if csv and sep == '\t': sep = ', '
+        if csv and sep == '\t':
+            sep = ', '
 
         # Is first CSV row?
         first_csv = True
@@ -206,28 +209,32 @@ def mysql_run(query, sep, csv):
                     sys.stdout.write(sep)    # Print field separator
 
                 # Use the field separator instead of newline
-                if not first_csv: sys.stdout.write(sep)
+                if not first_csv:
+                    sys.stdout.write(sep)
 
                 # Print NULL if column value is not defined
                 sys.stdout.write(col if col else 'NULL')
 
             # If output in CSV and there is only one column
             if csv and len(row) == 1:
-                if first_csv: first_csv = False
+                if first_csv:
+                    first_csv = False
             else:
                 sys.stdout.write('\n')
 
         # Final newline if output in CSV and there was only one column
-        if csv and len(row) == 1: sys.stdout.write('\n')
+        if csv and len(row) == 1:
+            sys.stdout.write('\n')
 
         cursor.close()
 
-    except mdb.Error, e:
-        print "MySQL error %d: %s" % (e.args[0], e.args[1])
+    except mdb.Error as e:
+        print("MySQL error %d: %s" % (e.args[0], e.args[1]))
         return ERROR
 
     finally:
-        if conn: conn.close()
+        if conn:
+            conn.close()
 
     return OK
 
@@ -241,43 +248,45 @@ def parse_expression(expr, binary):
     def add_softwares(field, binary):
         """Translate query field for softwares table."""
 
-        global has_software; has_software = True
+        global has_software
+        has_software = True
         return ' %ssw.%s' % (binary, field)
 
     def add_networkports(field, binary):
         """Translate query field for networkports table."""
 
-        global has_network; has_network = True
+        global has_network
+        has_network = True
         return ' %snp.%s' % (binary, field)
 
     fields = {
-        'host':     lambda: ' %sc.name' % binary,   # Accept both host and
+        'host': lambda: ' %sc.name' % binary,   # Accept both host and
         'hostname': lambda: ' %sc.name' % binary,   # hostname
-        'osname':   lambda: ' %sos.name' % binary,
-        'osver':    lambda: ' %sosv.name' % binary,
-        'site':     lambda: ' %sl.name' % binary,
-        'domain':   lambda: ' %sd.name' % binary,
-        'model':    lambda: ' %scm.name' % binary,
-        'type':     lambda: ' %sct.name' % binary,
-        'vendor':   lambda: ' %sm.name' % binary,
-        'state':    lambda: ' %ss.name' % binary,
-        'entity':   lambda: ' %se.name' % binary,
-        'user':     lambda: ' %su.name' % binary,
-        'group':    lambda: ' %sg.name' % binary,
+        'osname': lambda: ' %sos.name' % binary,
+        'osver': lambda: ' %sosv.name' % binary,
+        'site': lambda: ' %sl.name' % binary,
+        'domain': lambda: ' %sd.name' % binary,
+        'model': lambda: ' %scm.name' % binary,
+        'type': lambda: ' %sct.name' % binary,
+        'vendor': lambda: ' %sm.name' % binary,
+        'status': lambda: ' %ss.name' % binary,
+        'entity': lambda: ' %se.name' % binary,
+        'user': lambda: ' %su.name' % binary,
+        'group': lambda: ' %sg.name' % binary,
         'techuser': lambda: ' %stu.name' % binary,
-        'techgroup':lambda: ' %stg.name' % binary,
+        'techgroup': lambda: ' %stg.name' % binary,
         'software': lambda: add_softwares('name', binary),
-        'mac':      lambda: add_networkports('mac', binary),
-        'ip':       lambda: add_networkports('ip', binary),
-        'netmask':  lambda: add_networkports('netmask', binary),
-        'subnet':   lambda: add_networkports('subnet', binary),
-        'gateway':  lambda: add_networkports('gateway', binary),
-        }
+        'mac': lambda: add_networkports('mac', binary),
+        'ip': lambda: add_networkports('ip', binary),
+        'netmask': lambda: add_networkports('netmask', binary),
+        'subnet': lambda: add_networkports('subnet', binary),
+        'gateway': lambda: add_networkports('gateway', binary),
+    }
 
-    FIELD   = 0
-    OP      = 1
+    FIELD = 0
+    OP = 1
     LITERAL = 2
-    CONDOP  = 3
+    CONDOP = 3
 
     res = ''
     token = FIELD
@@ -289,17 +298,20 @@ def parse_expression(expr, binary):
                 token = OP
             except:
                 # If translateion fails, never mind... leave field as expressed
-                sys.exc_clear()
+                # sys.exc_clear()   # this is gone in Python 3
+                pass
         elif token == OP:
             if i != 'not':
                 token = LITERAL
         elif token == LITERAL:
             # add quotes to the string if not there yet
-            if not (i.startswith('"') or i.startswith("'")): i = "'%s" % i
-            if not (i.endswith('"') or i.endswith("'")): i = "%s'" % i
+            if not (i.startswith('"') or i.startswith("'")):
+                i = "'%s" % i
+            if not (i.endswith('"') or i.endswith("'")):
+                i = "%s'" % i
             token = CONDOP
         elif token == CONDOP:
-            token = FIELD;
+            token = FIELD
 
         res += " %s" % i
 
@@ -315,33 +327,37 @@ def main():
     def add_softwares(field, alias):
         """Add query field for softwares table."""
 
-        global has_software; has_software = True
+        global has_software
+        has_software = True
         return ', sw.%s as "%s"' % (field, alias)
 
     def add_softwareversions(field, alias):
         """Add query field for softwareversions table."""
 
-        global has_software; has_software = True
+        global has_software
+        has_software = True
         return ', sv.%s as "%s"' % (field, alias)
 
     def add_networkports(field, alias):
         """Add query field for networkports table."""
 
-        global has_network; has_network = True
+        global has_network
+        has_network = True
         return ', np.%s as "%s"' % (field, alias)
 
     def add_ipaddresses(field, alias):
         """Add query field for ipaddresses table."""
 
-        global has_network; has_network = True
+        global has_network
+        has_network = True
         return ', ip.%s as "%s"' % (field, alias)
 
     def add_ipnetworks(field, alias):
         """Add query field for ipaddresses table."""
 
-        global has_network; has_network = True
+        global has_network
+        has_network = True
         return ', ipn.%s as "%s"' % (field, alias)
-
 
     # Select distinct values if no duplicates
     if args.dups:
@@ -352,27 +368,28 @@ def main():
     if args.list:
         # Build the list from the respective table
         if args.list in ['ip', 'mac', 'netmask', 'subnet', 'gateway']:
-            query += ' %s from glpi_networkports where itemtype = "%s" and is_recursive = 0' % (args.list, itemtype)
+            query += ' %s from glpi_networkports where itemtype = "%s" and is_recursive = 0' % (
+                args.list, itemtype)
         else:
             list = {
-                'osname':   lambda: 'glpi_operatingsystems as t',
-                'osver':    lambda: 'glpi_operatingsystemversions as t',
-                'site':     lambda: 'glpi_locations as t',
-                'domain':   lambda: 'glpi_domains as t',
-                'model':    lambda: 'glpi_computermodels as t',
-                'type':     lambda: 'glpi_computertypes as t',
-                'vendor':   lambda: 'glpi_manufacturers as t',
-                'state':    lambda: 'glpi_states as t',
-                'entity':   lambda: 'glpi_entities as t',
-                'user':     lambda: 'glpi_users as t',
-                'group':    lambda: 'glpi_groups as t',
+                'osname': lambda: 'glpi_operatingsystems as t',
+                'osver': lambda: 'glpi_operatingsystemversions as t',
+                'site': lambda: 'glpi_locations as t',
+                'domain': lambda: 'glpi_domains as t',
+                'model': lambda: 'glpi_computermodels as t',
+                'type': lambda: 'glpi_computertypes as t',
+                'vendor': lambda: 'glpi_manufacturers as t',
+                'status': lambda: 'glpi_states as t',
+                'entity': lambda: 'glpi_entities as t',
+                'user': lambda: 'glpi_users as t',
+                'group': lambda: 'glpi_groups as t',
                 'techuser': lambda: 'glpi_users as t',
-                'techgroup':lambda: 'glpi_groups as t',
+                'techgroup': lambda: 'glpi_groups as t',
                 'software': lambda: (' glpi_softwareversions as sv,'
                                      ' glpi_softwares as t'
                                      ' where sv.softwares_id = t.id'
-                                       ' and t.is_deleted = 0'),
-                }
+                                     ' and t.is_deleted = 0'),
+            }
             query += ' t.name from ' + list[args.list]()
 
     else:
@@ -382,31 +399,31 @@ def main():
         # Also select other fields if --field argument(s) have been provided
         if args.field:
             field = {
-                'serial':   lambda: ', c.serial as "serial"',
-                'uuid':     lambda: ', c.uuid as "uuid"',
-                'osname':   lambda: ', os.name as "osname"',
-                'osver':    lambda: ', osv.name as "osver"',
-                'site':     lambda: ', l.name as "location"',
-                'domain':   lambda: ', d.name as "domain"',
-                'model':    lambda: ', cm.name as "model"',
-                'type':     lambda: ', ct.name as "type"',
-                'vendor':   lambda: ', m.name as "vendor"',
-                'state':    lambda: ', s.name as "state"',
-                'entity':   lambda: ', e.name as "entity"',
-                'user':     lambda: ', u.name as "user"',
-                'group':    lambda: ', g.name as "group"',
+                'serial': lambda: ', c.serial as "serial"',
+                'uuid': lambda: ', c.uuid as "uuid"',
+                'osname': lambda: ', os.name as "osname"',
+                'osver': lambda: ', osv.name as "osver"',
+                'site': lambda: ', l.name as "location"',
+                'domain': lambda: ', d.name as "domain"',
+                'model': lambda: ', cm.name as "model"',
+                'type': lambda: ', ct.name as "type"',
+                'vendor': lambda: ', m.name as "vendor"',
+                'status': lambda: ', s.name as "status"',
+                'entity': lambda: ', e.name as "entity"',
+                'user': lambda: ', u.name as "user"',
+                'group': lambda: ', g.name as "group"',
                 'techuser': lambda: ', tu.name as "techuser"',
-                'techgroup':lambda: ', tg.name as "techgroup"',
+                'techgroup': lambda: ', tg.name as "techgroup"',
                 'software': lambda: add_softwares('name', 'software'),
-                'swver':    lambda: add_softwareversions('name', 'swver'),
-                'ifname':   lambda: add_networkports('name', 'ifname'),
-                'mac':      lambda: add_networkports('mac', 'mac'),
-                #'ip':       lambda: add_networkports('ip', 'ip'),
-                'ip':       lambda: add_ipaddresses('name', 'ip'),
-                'netmask':  lambda: add_ipnetworks('netmask', 'netmask'),
-                'subnet':   lambda: add_ipnetworks('address', 'subnet'),
-                'gateway':  lambda: add_ipnetworks('gateway', 'gateway'),
-                }
+                'swver': lambda: add_softwareversions('name', 'swver'),
+                'ifname': lambda: add_networkports('name', 'ifname'),
+                'mac': lambda: add_networkports('mac', 'mac'),
+                # 'ip':       lambda: add_networkports('ip', 'ip'),
+                'ip': lambda: add_ipaddresses('name', 'ip'),
+                'netmask': lambda: add_ipnetworks('netmask', 'netmask'),
+                'subnet': lambda: add_ipnetworks('address', 'subnet'),
+                'gateway': lambda: add_ipnetworks('gateway', 'gateway'),
+            }
             for f in args.field:
                 query += field[f]()
 
@@ -434,8 +451,8 @@ def main():
             where += " and %sct.name like '%s'" % (binary, args.type)
         if args.vendor:
             where += " and %sm.name like '%s'" % (binary, args.vendor)
-        if args.state:
-            where += " and %ss.name like '%s'" % (binary, args.state)
+        if args.status:
+            where += " and %ss.name like '%s'" % (binary, args.status)
         if args.entity:
             where += " and %se.name like '%s'" % (binary, args.entity)
         if args.user:
@@ -467,57 +484,57 @@ def main():
 
         # Rock'n'roll the FROM clause                  table alias down here vvv
         query += (' from glpi_computers as c'                              # c
+                  ' left join glpi_items_operatingsystems as ios'          # ios
+                  ' on (c.id = ios.items_id)'
                   ' left join glpi_operatingsystems as os'                 # os
-                       ' on (c.operatingsystems_id = os.id)'
+                  ' on (ios.operatingsystems_id = os.id)'
                   ' left join glpi_operatingsystemversions as osv'         # osv
-                       ' on (c.operatingsystemversions_id = osv.id)'
+                  ' on (ios.operatingsystemversions_id = osv.id)'
                   ' left join glpi_locations as l'                         # l
-                       ' on (c.locations_id = l.id)'
+                  ' on (c.locations_id = l.id)'
                   ' left join glpi_domains as d'                           # d
-                       ' on (c.domains_id = d.id)'
+                  ' on (c.domains_id = d.id)'
                   ' left join glpi_computermodels as cm'                   # cm
-                       ' on (c.computermodels_id = cm.id)'
+                  ' on (c.computermodels_id = cm.id)'
                   ' left join glpi_computertypes as ct'                    # ct
-                       ' on (c.computertypes_id = ct.id)'
+                  ' on (c.computertypes_id = ct.id)'
                   ' left join glpi_manufacturers as m'                     # m
-                       ' on (c.manufacturers_id = m.id)'
+                  ' on (c.manufacturers_id = m.id)'
                   ' left join glpi_states as s on (c.states_id = s.id)'    # s
                   ' left join glpi_entities as e'                          # e
-                       ' on (c.entities_id = e.id)'
+                  ' on (c.entities_id = e.id)'
                   ' left join glpi_users as u on (c.users_id = u.id)'      # u
                   ' left join glpi_groups as g on (c.groups_id = g.id)'    # g
                   ' left join glpi_users as tu'                            # tu
-                       ' on (c.users_id_tech = tu.id)'
+                  ' on (c.users_id_tech = tu.id)'
                   ' left join glpi_groups as tg'                           # tg
-                       ' on (c.groups_id_tech = tg.id)')
+                  ' on (c.groups_id_tech = tg.id)')
         if has_software:
             query += (' left join glpi_computers_softwareversions as csv'  # csv
-                           ' on (c.id = csv.computers_id)'
+                      ' on (c.id = csv.computers_id)'
                       ' left join glpi_softwareversions as sv'             # sv
-                           ' on (csv.softwareversions_id = sv.id)'
+                      ' on (csv.softwareversions_id = sv.id)'
                       ' left join glpi_softwares as sw'                    # sw
-                           ' on (sv.softwares_id = sw.id)')
+                      ' on (sv.softwares_id = sw.id)')
         if has_network:
-            #query += (' left join glpi_networkports as np'                # np
-            #query += (' left join glpi_networkportmigrations as np'       # np
-            #               ' on (c.id = np.items_id)')
             query += (' left join glpi_networkports as np'                 # np
-                            ' on (c.id = np.items_id)'
+                      ' on (c.id = np.items_id)'
                       ' left join glpi_networknames as nn'                 # nn
-                            ' on (np.id = nn.items_id)'
+                      ' on (np.id = nn.items_id)'
                       ' left join glpi_ipaddresses as ip'                  # ip
-                           ' on (nn.id = ip.items_id)'
+                      ' on (nn.id = ip.items_id)'
                       ' left join glpi_ipaddresses_ipnetworks as ian'      # ian
-                           ' on (ip.id = ian.ipaddresses_id)'
+                      ' on (ip.id = ian.ipaddresses_id)'
                       ' left join glpi_ipnetworks as ipn'                  # ipn
-                           ' on (ipn.id = ian.ipnetworks_id)')
+                      ' on (ipn.id = ian.ipnetworks_id)')
 
         query += ' where c.is_deleted = 0'
         query += where
 
-        if has_software: query += ' and csv.is_deleted = 0'
-        if has_network:  query += ' and np.itemtype = "%s" and np.is_recursive = 0' % itemtype
-
+        if has_software:
+            query += ' and csv.is_deleted = 0'
+        if has_network:
+            query += ' and np.itemtype = "%s" and np.is_recursive = 0' % itemtype
 
     # Default is to sort by name
     if not args.nosort:
@@ -525,13 +542,14 @@ def main():
 
     # Show query if in debug mode
     if args.debug:
-        print "SQL query: %s" % query
+        print("SQL query: %s" % query)
 
     return mysql_run(query, args.sep, args.csv)
+
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        print "Caught Ctrl-C."
+        print("Caught Ctrl-C.")
         sys.exit(ERROR)
